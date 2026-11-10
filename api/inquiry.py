@@ -6,6 +6,10 @@
     GMAIL_USER          발송용 Gmail 주소
     GMAIL_APP_PASSWORD  Gmail 앱 비밀번호(16자리)
     RECEIVER_EMAIL      문의 수신 주소 (콤마로 여러 개 가능, 생략 시 GMAIL_USER)
+    SUPABASE_URL        Supabase 프로젝트 URL (예: https://xxxx.supabase.co)
+    SUPABASE_KEY        Supabase publishable(anon) 키 — RLS로 insert만 허용됨
+
+DB 저장과 메일 발송 중 하나라도 성공하면 접수 성공으로 응답한다.
 """
 
 import html
@@ -14,6 +18,8 @@ import os
 import re
 import smtplib
 import sys
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta, timezone
 from email.message import EmailMessage
 from email.utils import formataddr
@@ -133,6 +139,30 @@ def send_mail(clean: dict) -> None:
         smtp.send_message(msg)
 
 
+def save_to_db(clean: dict) -> None:
+    """Supabase(PostgREST)에 문의 저장. 미설정 시 RuntimeError."""
+    url = os.environ.get("SUPABASE_URL", "").strip().rstrip("/")
+    key = os.environ.get("SUPABASE_KEY", "").strip()
+    if not url or not key:
+        raise RuntimeError("SUPABASE_URL / SUPABASE_KEY 환경변수가 설정되지 않았습니다.")
+
+    row = {k: (clean[k] or None) for k, *_ in FIELDS}
+    req = urllib.request.Request(
+        f"{url}/rest/v1/inquiries",
+        data=json.dumps(row, ensure_ascii=False).encode("utf-8"),
+        method="POST",
+        headers={
+            "apikey": key,
+            "Content-Type": "application/json",
+            "Prefer": "return=minimal",  # anon은 select 권한이 없으므로 결과 반환 안 받음
+        },
+    )
+    if not key.startswith("sb_"):  # 레거시 JWT anon 키는 Authorization 헤더도 필요
+        req.add_header("Authorization", f"Bearer {key}")
+    with urllib.request.urlopen(req, timeout=10) as res:
+        res.read()
+
+
 def _send_json(h: BaseHTTPRequestHandler, status: int, payload: dict) -> None:
     body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
     h.send_response(status)
@@ -169,14 +199,24 @@ class handler(BaseHTTPRequestHandler):
                 self, 400, {"ok": False, "message": "입력값을 확인해주세요.", "errors": errors}
             )
 
+        saved = sent = False
+        try:
+            save_to_db(clean)
+            saved = True
+        except urllib.error.HTTPError as e:
+            detail = e.read().decode("utf-8", "replace")[:300]
+            print(f"[inquiry] db error: {e.code} {detail}", file=sys.stderr)
+        except (RuntimeError, OSError) as e:
+            print(f"[inquiry] db error: {type(e).__name__}: {e}", file=sys.stderr)
+
         try:
             send_mail(clean)
-        except RuntimeError as e:
-            print(f"[inquiry] config error: {e}", file=sys.stderr)
-            return _send_json(self, 500, {"ok": False, "message": "서버 설정 오류입니다. 전화로 문의해주세요."})
-        except (smtplib.SMTPException, OSError) as e:
-            print(f"[inquiry] smtp error: {type(e).__name__}: {e}", file=sys.stderr)
-            return _send_json(self, 502, {"ok": False, "message": "메일 발송에 실패했습니다. 잠시 후 다시 시도해주세요."})
+            sent = True
+        except (RuntimeError, smtplib.SMTPException, OSError) as e:
+            print(f"[inquiry] mail error: {type(e).__name__}: {e}", file=sys.stderr)
+
+        if not (saved or sent):
+            return _send_json(self, 502, {"ok": False, "message": "접수에 실패했습니다. 잠시 후 다시 시도하거나 전화로 문의해주세요."})
 
         return _send_json(self, 200, {"ok": True, "message": "문의가 접수되었습니다."})
 

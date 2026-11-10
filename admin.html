@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="robots" content="noindex, nofollow">
+  <title>관리자 | 라이드원 모터스 문의 관리</title>
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🏍️</text></svg>">
+  <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+
+<!-- 로그인 -->
+<section id="login-view" class="login-wrap" hidden>
+  <form id="login-form" class="login-card">
+    <h1>RIDE<span>ONE</span> 관리자</h1>
+    <p class="muted">관리자 계정으로 로그인하세요.</p>
+    <label>이메일<input type="email" name="email" autocomplete="username" required></label>
+    <label>비밀번호<input type="password" name="password" autocomplete="current-password" required></label>
+    <button type="submit" class="btn" id="login-btn">로그인</button>
+    <p id="login-status" class="status"></p>
+  </form>
+</section>
+
+<!-- 관리자 화면 -->
+<section id="admin-view" hidden>
+  <header class="topbar">
+    <h1>RIDE<span>ONE</span> 문의 관리</h1>
+    <div class="topbar-right">
+      <span id="user-email" class="muted"></span>
+      <button id="logout-btn" class="btn btn-ghost btn-sm">로그아웃</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <ul class="stats" id="stats"></ul>
+
+    <div class="toolbar">
+      <select id="filter-status">
+        <option value="">전체 상태</option>
+        <option>신규</option><option>상담중</option><option>완료</option><option>보류</option>
+      </select>
+      <input id="filter-q" type="search" placeholder="이름·연락처·차종·지역 검색">
+      <button id="refresh-btn" class="btn btn-ghost btn-sm">새로고침</button>
+      <button id="csv-btn" class="btn btn-ghost btn-sm">CSV 내보내기</button>
+    </div>
+
+    <p id="list-status" class="status"></p>
+    <div class="table-wrap">
+      <table class="list">
+        <thead>
+          <tr><th>접수일시</th><th>상태</th><th>이름</th><th>연락처</th><th>관심 차종</th><th>유형</th><th>예산</th><th>지역</th><th></th></tr>
+        </thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </main>
+</section>
+
+<!-- 상세 -->
+<dialog id="detail">
+  <form method="dialog" class="detail-card" id="detail-form">
+    <header><h2 id="d-title"></h2><button value="cancel" class="x" aria-label="닫기">✕</button></header>
+    <dl id="d-fields"></dl>
+    <label>상태
+      <select name="status"><option>신규</option><option>상담중</option><option>완료</option><option>보류</option></select>
+    </label>
+    <label>관리자 메모<textarea name="admin_memo" rows="4" maxlength="2000" placeholder="상담 내용, 다음 연락 일정 등"></textarea></label>
+    <p id="d-status" class="status"></p>
+    <footer>
+      <button type="button" id="d-delete" class="btn btn-danger btn-sm">삭제</button>
+      <span class="spacer"></span>
+      <button value="cancel" class="btn btn-ghost btn-sm">닫기</button>
+      <button type="button" id="d-save" class="btn btn-sm">저장</button>
+    </footer>
+  </form>
+</dialog>
+
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="/static/admin.js"></script>
+</body>
+</html>
