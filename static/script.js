@@ -88,7 +88,9 @@
   function showErrors(errors) {
     Object.entries(errors).forEach(([k, v]) => setError(k, v));
     const first = form.querySelector(".field.invalid input, .field.invalid select, .field.invalid textarea");
-    first?.focus();
+    if (!first) return;
+    first.closest(".field").scrollIntoView({ behavior: "smooth", block: "center" });
+    first.focus({ preventScroll: true });
   }
 
   function setStatus(msg, type) {
@@ -103,7 +105,14 @@
 
     const data = collect();
     const errors = validate(data);
-    if (Object.keys(errors).length) return showErrors(errors);
+    if (Object.keys(errors).length) {
+      showErrors(errors);
+      const labels = { name: "이름", phone: "연락처", email: "이메일", model: "관심 차종",
+        purchase_type: "구매 유형", agree: "개인정보 동의" };
+      const missing = Object.keys(errors).map((k) => labels[k] || k).join(", ");
+      setStatus(`⚠ 입력 내용을 확인해주세요: ${missing}`, "fail");
+      return;
+    }
 
     btn.disabled = true;
     btn.textContent = "전송 중...";
