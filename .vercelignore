@@ -1,0 +1,8 @@
+.env
+.env.local
+.venv
+.idea
+__pycache__
+dev_server.py
+main.py
+README.md
