@@ -1,7 +1,7 @@
 /**
  * 중요한 설정 변경 전 관리자 비밀번호 재확인
  */
-import React, { useEffect, useState } from 'react';
+import React, { useState } from 'react';
 import { KeyboardAvoidingView, Modal, Platform, StyleSheet, Text, View } from 'react-native';
 import { Button, ErrorText, Field, colors, formatRemaining } from './ui';
 import { verifyLogin } from '../security/authStore';
@@ -18,12 +18,15 @@ export default function PasswordConfirmModal({ visible, title, onConfirmed, onCa
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
-  useEffect(() => {
+  // 창이 닫히면 입력값/오류 초기화 (effect 대신 렌더 중 상태 조정)
+  const [prevVisible, setPrevVisible] = useState(visible);
+  if (visible !== prevVisible) {
+    setPrevVisible(visible);
     if (!visible) {
       setPw('');
       setError(null);
     }
-  }, [visible]);
+  }
 
   const confirm = async () => {
     if (!pw) return setError('비밀번호를 입력하세요.');
