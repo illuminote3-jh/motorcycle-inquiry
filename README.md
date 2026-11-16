@@ -35,3 +35,7 @@ Google 계정 → 보안 → 2단계 인증 활성화 → 앱 비밀번호 생�
 - RLS: 방문자(anon)는 문의 등록만 가능, 조회·수정·삭제는 `admins`에 등록된 이메일로 로그인한 사용자만 가능
 - 관리자 추가: Supabase 대시보드 → Authentication → Users → Add user(이메일/비밀번호) 후
   SQL Editor에서 `insert into public.admins (email) values ('관리자@이메일');`
+
+## total-login-sys/ (별도 프로젝트)
+통합로그인 모바일 앱(Expo/React Native). 이 랜딩페이지와 무관하며 Vercel 배포에서 제외됨(`.vercelignore`).
+자세한 내용은 [total-login-sys/README.md](total-login-sys/README.md) 참고.
