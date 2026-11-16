@@ -5,7 +5,7 @@ import React, { useMemo, useState } from 'react';
 import { FlatList, Pressable, StyleSheet, Text, TextInput, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import { Button, Header, colors } from '../components/ui';
-import { Site, hostOf } from '../storage/vault';
+import { Site, hostOf, isHttpUrl } from '../storage/vault';
 
 type Props = {
   sites: Site[];
@@ -23,7 +23,7 @@ export default function SiteListScreen({ sites, onOpen, onEdit, onSettings, onLo
     const list = [...sites].sort((a, b) => a.name.localeCompare(b.name, 'ko'));
     if (!q) return list;
     return list.filter(
-      (s) => s.name.toLowerCase().includes(q) || hostOf(s.loginUrl).includes(q) || s.username.toLowerCase().includes(q),
+      (s) => s.name.toLowerCase().includes(q) || hostOf(s.loginUrl, !!s.allowInsecure).includes(q) || s.username.toLowerCase().includes(q),
     );
   }, [sites, query]);
 
@@ -64,7 +64,7 @@ export default function SiteListScreen({ sites, onOpen, onEdit, onSettings, onLo
                 {item.name}
               </Text>
               <Text style={styles.meta} numberOfLines={1}>
-                🔒 {hostOf(item.loginUrl)} · {item.username}
+                {isHttpUrl(item.loginUrl) ? '⚠️' : '🔒'} {hostOf(item.loginUrl, !!item.allowInsecure)} · {item.username}
               </Text>
             </View>
             <Pressable onPress={() => onEdit(item)} hitSlop={10} style={styles.editBtn}>

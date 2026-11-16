@@ -20,6 +20,8 @@ export type Site = {
   submitSelector?: string;
   /** 입력 후 로그인 버튼 자동 클릭 */
   autoSubmit: boolean;
+  /** 보안 연결이 아닌(http) 페이지 허용 — 사용자가 사이트별로 명시적으로 켠 경우만 */
+  allowInsecure?: boolean;
   createdAt: number;
   updatedAt: number;
 };
@@ -52,22 +54,35 @@ export function newSiteId(): string {
 const URL_RE = /^([a-z][a-z0-9+.-]*):\/\/([^/?#\s]+)([/?#][^\s]*)?$/i;
 const HOST_RE = /^([a-z0-9-]+\.)*[a-z0-9-]+(:\d{1,5})?$/i;
 
-/** https URL만 허용(아이디:비번@ 포함 URL, http, javascript: 등 차단). 정상이면 URL, 아니면 null */
-export function normalizeLoginUrl(input: string): string | null {
+/** 허용 스킴: 기본 https만, allowHttp면 http도 허용 */
+function schemeAllowed(scheme: string, allowHttp: boolean): boolean {
+  const s = scheme.toLowerCase();
+  return s === 'https' || (allowHttp && s === 'http');
+}
+
+/**
+ * 로그인 주소 검증. 기본은 https만 허용, allowHttp면 http도 허용
+ * (아이디:비번@ 포함 URL, javascript: 등은 항상 차단). 정상이면 URL, 아니면 null
+ */
+export function normalizeLoginUrl(input: string, allowHttp = false): string | null {
   let s = input.trim();
   if (!s) return null;
   if (!/^[a-z][a-z0-9+.-]*:/i.test(s)) s = `https://${s}`;
   const m = URL_RE.exec(s);
   if (!m) return null;
   const [, scheme, authority, rest] = m;
-  if (scheme.toLowerCase() !== 'https') return null;
+  if (!schemeAllowed(scheme, allowHttp)) return null;
   if (authority.includes('@') || !HOST_RE.test(authority)) return null;
-  return `https://${authority.toLowerCase()}${rest ?? '/'}`;
+  return `${scheme.toLowerCase()}://${authority.toLowerCase()}${rest ?? '/'}`;
 }
 
-/** URL의 호스트명(포트 제외, 소문자). https가 아니면 빈 문자열 */
-export function hostOf(url: string): string {
+/** URL의 호스트명(포트 제외, 소문자). 허용되지 않은 스킴이면 빈 문자열 */
+export function hostOf(url: string, allowHttp = false): string {
   const m = URL_RE.exec(url ?? '');
-  if (!m || m[1].toLowerCase() !== 'https' || m[2].includes('@')) return '';
+  if (!m || !schemeAllowed(m[1], allowHttp) || m[2].includes('@')) return '';
   return m[2].replace(/:\d+$/, '').toLowerCase();
+}
+
+export function isHttpUrl(url: string): boolean {
+  return /^http:\/\//i.test(url ?? '');
 }

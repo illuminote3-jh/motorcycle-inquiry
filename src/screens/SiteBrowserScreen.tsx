@@ -7,7 +7,7 @@ import { SafeAreaView } from 'react-native-safe-area-context';
 import { WebView, WebViewMessageEvent, WebViewNavigation } from 'react-native-webview';
 import type { ShouldStartLoadRequest } from 'react-native-webview/lib/WebViewTypes';
 import { colors } from '../components/ui';
-import { Site, hostOf } from '../storage/vault';
+import { Site, hostOf, isHttpUrl } from '../storage/vault';
 import { AutofillStatus, buildAutofillScript } from '../webview/autofill';
 
 /** 한 번 열 때 자동 주입을 시도할 최대 페이지 로드 횟수 (로그인 실패 시 무한 반복 방지) */
@@ -19,7 +19,7 @@ const STATUS_TEXT: Record<AutofillStatus | 'blocked' | 'loading', string> = {
   submitted: '자동 로그인을 진행했습니다.',
   'username-only': '아이디를 입력했습니다. 비밀번호 단계를 기다리는 중…',
   'not-found': '로그인 입력창을 찾지 못했습니다. 편집 > 고급 설정에서 선택자를 지정하세요.',
-  blocked: '보안 연결(https)이 아닌 페이지로의 이동을 차단했습니다.',
+  blocked: '안전하지 않은(http) 페이지로의 이동을 차단했습니다. 사이트 편집에서 "http 허용"을 켜면 열 수 있습니다.',
 };
 
 /** 페이지 안의 터치/스크롤/입력을 앱에 알려 무조작 자동 잠금이 걸리지 않게 함 (최대 5초에 1번) */
@@ -36,7 +36,8 @@ type Props = { site: Site; onClose: () => void; onActivity: () => void };
 
 export default function SiteBrowserScreen({ site, onClose, onActivity }: Props) {
   const webRef = useRef<WebView<object>>(null);
-  const siteHost = hostOf(site.loginUrl);
+  const allowHttp = !!site.allowInsecure;
+  const siteHost = hostOf(site.loginUrl, allowHttp);
   const injectCount = useRef(0);
   const done = useRef(false);
   const [nav, setNav] = useState({ url: site.loginUrl, canGoBack: false, canGoForward: false });
@@ -54,13 +55,13 @@ export default function SiteBrowserScreen({ site, onClose, onActivity }: Props) 
 
   const inject = useCallback(
     (url: string, force = false) => {
-      // 등록된 도메인과 정확히 일치하는 https 페이지에서만 계정 정보 주입
-      if (hostOf(url) !== siteHost || !siteHost) return;
+      // 등록된 도메인과 정확히 일치하는 https 페이지에서만 계정 정보 주입 (http 허용 사이트는 http도)
+      if (hostOf(url, allowHttp) !== siteHost || !siteHost) return;
       if (!force && (done.current || injectCount.current >= MAX_INJECT_LOADS)) return;
       injectCount.current += 1;
       webRef.current?.injectJavaScript(buildAutofillScript(site));
     },
-    [site, siteHost],
+    [site, siteHost, allowHttp],
   );
 
   const onLoadEnd = (e: { nativeEvent: { url: string } }) => {
@@ -70,7 +71,7 @@ export default function SiteBrowserScreen({ site, onClose, onActivity }: Props) 
 
   const onMessage = (e: WebViewMessageEvent) => {
     if (e.nativeEvent.data === '{"t":"tls-activity"}') return onActivity();
-    if (hostOf(e.nativeEvent.url) !== siteHost) return; // 다른 출처 메시지 무시
+    if (hostOf(e.nativeEvent.url, allowHttp) !== siteHost) return; // 다른 출처 메시지 무시
     try {
       const data = JSON.parse(e.nativeEvent.data) as { t?: string; s?: AutofillStatus };
       if (data.t !== 'tls-autofill' || !data.s || !(data.s in STATUS_TEXT)) return;
@@ -84,8 +85,9 @@ export default function SiteBrowserScreen({ site, onClose, onActivity }: Props) 
   const onShouldStart = (req: ShouldStartLoadRequest) => {
     const url = req.url ?? '';
     if (url.startsWith('https://') || url === 'about:blank' || url.startsWith('about:srcdoc')) return true;
+    if (allowHttp && isHttpUrl(url)) return true; // 사용자가 이 사이트에 http 허용을 켠 경우
     if (req.isTopFrame !== false) setStatus('blocked');
-    return false; // http, javascript:, intent:, file: 등 차단
+    return false; // http(미허용), javascript:, intent:, file: 등 차단
   };
 
   const onNavChange = (n: WebViewNavigation) => {
@@ -93,8 +95,9 @@ export default function SiteBrowserScreen({ site, onClose, onActivity }: Props) 
     setNav({ url: n.url, canGoBack: n.canGoBack, canGoForward: n.canGoForward });
   };
 
-  const currentHost = hostOf(nav.url);
+  const currentHost = hostOf(nav.url, allowHttp);
   const onSiteDomain = currentHost === siteHost;
+  const insecureNow = isHttpUrl(nav.url);
 
   return (
     <SafeAreaView style={styles.safe} edges={['top', 'left', 'right', 'bottom']}>
@@ -106,8 +109,8 @@ export default function SiteBrowserScreen({ site, onClose, onActivity }: Props) 
           <Text style={styles.title} numberOfLines={1}>
             {site.name}
           </Text>
-          <Text style={[styles.url, !onSiteDomain && { color: '#B7791F' }]} numberOfLines={1}>
-            {currentHost ? `🔒 ${currentHost}` : '⚠️ 보안 연결 아님'}
+          <Text style={[styles.url, (!onSiteDomain || insecureNow) && { color: '#B7791F' }]} numberOfLines={1}>
+            {currentHost ? `${insecureNow ? '⚠️ 안전하지 않음 · ' : '🔒 '}${currentHost}` : '⚠️ 보안 연결 아님'}
             {!onSiteDomain && currentHost ? ' (등록 도메인 외부)' : ''}
           </Text>
         </View>
@@ -123,7 +126,7 @@ export default function SiteBrowserScreen({ site, onClose, onActivity }: Props) 
       <WebView<object>
         ref={webRef}
         source={{ uri: site.loginUrl }}
-        originWhitelist={['https://*']}
+        originWhitelist={allowHttp ? ['https://*', 'http://*'] : ['https://*']}
         onShouldStartLoadWithRequest={onShouldStart}
         onLoadEnd={onLoadEnd}
         injectedJavaScript={ACTIVITY_SCRIPT}
@@ -133,7 +136,7 @@ export default function SiteBrowserScreen({ site, onClose, onActivity }: Props) 
         onRenderProcessGone={() => webRef.current?.reload()}
         javaScriptEnabled
         domStorageEnabled
-        mixedContentMode="never"
+        mixedContentMode={allowHttp ? 'compatibility' : 'never'}
         allowFileAccess={false}
         allowFileAccessFromFileURLs={false}
         allowUniversalAccessFromFileURLs={false}

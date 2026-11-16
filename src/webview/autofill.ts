@@ -6,7 +6,7 @@
  *    (피싱 사이트로 리다이렉트되거나 다른 도메인에서는 절대 주입하지 않음)
  * 2) 스크립트 내부에서도 location을 다시 검사 (주입 직전 페이지가 바뀌는 경쟁 상태 대비)
  * 3) 문자열은 JSON.stringify로만 삽입 → 따옴표/스크립트 인젝션 불가
- * 4) https 페이지에서만 동작
+ * 4) https 페이지에서만 동작 (사용자가 해당 사이트에 http 허용을 켠 경우만 http도 허용)
  */
 import type { Site } from '../storage/vault';
 import { hostOf } from '../storage/vault';
@@ -15,7 +15,8 @@ export type AutofillStatus = 'filled' | 'username-only' | 'not-found' | 'submitt
 
 export function buildAutofillScript(site: Site): string {
   const cfg = {
-    host: hostOf(site.loginUrl),
+    host: hostOf(site.loginUrl, !!site.allowInsecure),
+    http: !!site.allowInsecure,
     u: site.username,
     p: site.password,
     us: site.usernameSelector || '',
@@ -36,7 +37,8 @@ export function buildAutofillScript(site: Site): string {
   function post(status) {
     try { window.ReactNativeWebView.postMessage(JSON.stringify({ t: 'tls-autofill', s: status })); } catch (e) {}
   }
-  if (location.protocol !== 'https:' || location.hostname.toLowerCase() !== C.host) { C = null; return; }
+  var protoOk = location.protocol === 'https:' || (C.http && location.protocol === 'http:');
+  if (!protoOk || location.hostname.toLowerCase() !== C.host) { C = null; return; }
   if (window.__tlsRunning) { C = null; return; }
   window.__tlsRunning = true;
 
