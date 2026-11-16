@@ -41,7 +41,8 @@
         {
           "faceIDPermission": "앱 잠금 해제를 위해 Face ID를 사용합니다."
         }
-      ]
+      ],
+      "expo-sharing"
     ],
     "extra": {
       "eas": {
