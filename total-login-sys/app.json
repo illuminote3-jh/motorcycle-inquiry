@@ -8,7 +8,12 @@
     "userInterfaceStyle": "light",
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.totalloginsys.app"
+      "bundleIdentifier": "com.totalloginsys.app",
+      "infoPlist": {
+        "NSAppTransportSecurity": {
+          "NSAllowsArbitraryLoadsInWebContent": true
+        }
+      }
     },
     "android": {
       "package": "com.totalloginsys.app",
@@ -42,7 +47,15 @@
           "faceIDPermission": "앱 잠금 해제를 위해 Face ID를 사용합니다."
         }
       ],
-      "expo-sharing"
+      "expo-sharing",
+      [
+        "expo-build-properties",
+        {
+          "android": {
+            "usesCleartextTraffic": true
+          }
+        }
+      ]
     ],
     "extra": {
       "eas": {

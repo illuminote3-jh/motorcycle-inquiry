@@ -20,6 +20,7 @@ export default function SiteEditScreen({ site, onSave, onDelete, onCancel }: Pro
   const [username, setUsername] = useState(site?.username ?? '');
   const [password, setPassword] = useState(site?.password ?? '');
   const [autoSubmit, setAutoSubmit] = useState(site?.autoSubmit ?? true);
+  const [allowInsecure, setAllowInsecure] = useState(site?.allowInsecure ?? false);
   const [showAdvanced, setShowAdvanced] = useState(
     !!(site?.usernameSelector || site?.passwordSelector || site?.submitSelector),
   );
@@ -29,11 +30,28 @@ export default function SiteEditScreen({ site, onSave, onDelete, onCancel }: Pro
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
+  const toggleInsecure = (on: boolean) => {
+    if (!on) return setAllowInsecure(false);
+    Alert.alert(
+      '안전하지 않은 사이트 허용',
+      '보안 연결(https)이 아닌 사이트는 같은 와이파이 등 네트워크에서 아이디/비밀번호가 노출될 수 있습니다. 믿을 수 있는 사이트(회사 내부 시스템 등)에만 켜세요.',
+      [
+        { text: '취소', style: 'cancel' },
+        { text: '허용', style: 'destructive', onPress: () => setAllowInsecure(true) },
+      ],
+    );
+  };
+
   const save = async () => {
     setError(null);
     if (!name.trim()) return setError('사이트 이름을 입력하세요.');
-    const loginUrl = normalizeLoginUrl(url);
-    if (!loginUrl) return setError('로그인 주소는 https:// 로 시작하는 올바른 주소여야 합니다. (http 사이트는 보안상 지원하지 않습니다)');
+    const loginUrl = normalizeLoginUrl(url, allowInsecure);
+    if (!loginUrl) {
+      if (!allowInsecure && normalizeLoginUrl(url, true)) {
+        return setError('안전하지 않은(http) 주소입니다. 아래 "안전하지 않은(http) 사이트 허용"을 켜면 저장할 수 있습니다.');
+      }
+      return setError('올바른 로그인 주소를 입력하세요. (예: https://example.com/login)');
+    }
     if (!username) return setError('아이디를 입력하세요.');
     if (!password) return setError('비밀번호를 입력하세요.');
     const now = Date.now();
@@ -49,6 +67,7 @@ export default function SiteEditScreen({ site, onSave, onDelete, onCancel }: Pro
         passwordSelector: pwSel.trim() || undefined,
         submitSelector: submitSel.trim() || undefined,
         autoSubmit,
+        allowInsecure: allowInsecure || undefined,
         createdAt: site?.createdAt ?? now,
         updatedAt: now,
       });
@@ -89,6 +108,13 @@ export default function SiteEditScreen({ site, onSave, onDelete, onCancel }: Pro
                 <Text style={styles.switchHint}>끄면 아이디/비밀번호만 채워 줍니다.</Text>
               </View>
               <Switch value={autoSubmit} onValueChange={setAutoSubmit} />
+            </View>
+            <View style={[styles.switchRow, { marginTop: 14 }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={styles.switchLabel}>안전하지 않은(http) 사이트 허용</Text>
+                <Text style={styles.switchHint}>http:// 주소이거나 로그인 중 http 페이지로 이동하는 사이트만 켜세요.</Text>
+              </View>
+              <Switch value={allowInsecure} onValueChange={toggleInsecure} />
             </View>
           </Card>
 
