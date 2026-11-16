@@ -3,8 +3,8 @@
  * 화면 흐름: (최초) 관리자 설정 → 로그인 → 웹사이트 관리 ↔ 사이트 편집 / 사이트 창 / 설정
  *
  * 보안 동작
- * - 앱이 백그라운드로 가면 즉시 잠금 + 메모리의 계정 목록 폐기
- * - 일정 시간 조작이 없으면 자동 잠금
+ * - 다른 앱으로 전환 후 설정한 시간(기본 5분)이 지나 돌아오면 잠금 + 메모리의 계정 목록 폐기
+ * - 일정 시간 조작이 없으면 자동 잠금 (웹사이트 창 안의 조작도 활동으로 인정)
  * - 화면 캡처/녹화 차단, 앱 전환 화면(최근 앱 목록)에서 내용 가림
  */
 import React, { useCallback, useEffect, useRef, useState } from 'react';
@@ -31,6 +31,7 @@ import {
   wipeSecureData,
 } from './src/security/authStore';
 import { Site, loadSites, saveSites, wipeVault } from './src/storage/vault';
+import { isLockSuppressed } from './src/security/lockGuard';
 
 type Phase = 'loading' | 'setup' | 'login' | 'app' | 'error';
 type Route =
@@ -83,17 +84,34 @@ export default function App() {
     setPhase('login');
   }, []);
 
-  // 백그라운드 전환 시 즉시 잠금
+  // 다른 앱으로 전환: 설정한 유지 시간 안에 돌아오면 로그인 유지, 지나면 잠금
+  // (앱이 직접 띄운 파일 선택/공유/생체인증 창은 제외)
+  const settingsRef = useRef(settings);
+  settingsRef.current = settings;
+  const backgroundAt = useRef<number | null>(null);
   useEffect(() => {
     const sub = AppState.addEventListener('change', (state) => {
-      if (state === 'background') lock();
+      if (state === 'background') {
+        if (isLockSuppressed()) return;
+        if (settingsRef.current.backgroundLockSeconds <= 0) lock();
+        else backgroundAt.current = Date.now();
+      } else if (state === 'active' && backgroundAt.current !== null) {
+        const away = Date.now() - backgroundAt.current;
+        backgroundAt.current = null;
+        if (away > settingsRef.current.backgroundLockSeconds * 1000) lock();
+        else lastActivity.current = Date.now();
+      }
     });
     return () => sub.remove();
   }, [lock]);
 
-  // 무조작 자동 잠금
+  const touch = useCallback(() => {
+    lastActivity.current = Date.now();
+  }, []);
+
+  // 무조작 자동 잠금 (0 = 사용 안 함)
   useEffect(() => {
-    if (phase !== 'app') return;
+    if (phase !== 'app' || settings.autoLockSeconds <= 0) return;
     lastActivity.current = Date.now();
     const t = setInterval(() => {
       if (Date.now() - lastActivity.current > settings.autoLockSeconds * 1000) lock();
@@ -182,7 +200,7 @@ export default function App() {
       />
     );
   } else if (route.name === 'browser') {
-    content = <SiteBrowserScreen site={route.site} onClose={() => setRoute({ name: 'list' })} />;
+    content = <SiteBrowserScreen site={route.site} onClose={() => setRoute({ name: 'list' })} onActivity={touch} />;
   } else if (route.name === 'settings') {
     content = (
       <SettingsScreen
@@ -191,6 +209,8 @@ export default function App() {
         onMethodChanged={setMethod}
         onSettingsChanged={setSettings}
         onReset={resetAll}
+        sites={sites}
+        onImport={persist}
         onBack={() => setRoute({ name: 'list' })}
       />
     );

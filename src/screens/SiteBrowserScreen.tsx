@@ -22,9 +22,19 @@ const STATUS_TEXT: Record<AutofillStatus | 'blocked' | 'loading', string> = {
   blocked: '보안 연결(https)이 아닌 페이지로의 이동을 차단했습니다.',
 };
 
-type Props = { site: Site; onClose: () => void };
+/** 페이지 안의 터치/스크롤/입력을 앱에 알려 무조작 자동 잠금이 걸리지 않게 함 (최대 5초에 1번) */
+const ACTIVITY_SCRIPT = `(function(){
+  if (window.__tlsActivity) return; window.__tlsActivity = true;
+  var last = 0;
+  function ping(){ var n = Date.now(); if (n - last < 5000) return; last = n;
+    try { window.ReactNativeWebView.postMessage('{"t":"tls-activity"}'); } catch (e) {} }
+  ['touchstart','scroll','keydown','input'].forEach(function(ev){
+    window.addEventListener(ev, ping, { passive: true, capture: true }); });
+})(); true;`;
 
-export default function SiteBrowserScreen({ site, onClose }: Props) {
+type Props = { site: Site; onClose: () => void; onActivity: () => void };
+
+export default function SiteBrowserScreen({ site, onClose, onActivity }: Props) {
   const webRef = useRef<WebView<object>>(null);
   const siteHost = hostOf(site.loginUrl);
   const injectCount = useRef(0);
@@ -53,9 +63,13 @@ export default function SiteBrowserScreen({ site, onClose }: Props) {
     [site, siteHost],
   );
 
-  const onLoadEnd = (e: { nativeEvent: { url: string } }) => inject(e.nativeEvent.url);
+  const onLoadEnd = (e: { nativeEvent: { url: string } }) => {
+    onActivity();
+    inject(e.nativeEvent.url);
+  };
 
   const onMessage = (e: WebViewMessageEvent) => {
+    if (e.nativeEvent.data === '{"t":"tls-activity"}') return onActivity();
     if (hostOf(e.nativeEvent.url) !== siteHost) return; // 다른 출처 메시지 무시
     try {
       const data = JSON.parse(e.nativeEvent.data) as { t?: string; s?: AutofillStatus };
@@ -75,6 +89,7 @@ export default function SiteBrowserScreen({ site, onClose }: Props) {
   };
 
   const onNavChange = (n: WebViewNavigation) => {
+    onActivity();
     setNav({ url: n.url, canGoBack: n.canGoBack, canGoForward: n.canGoForward });
   };
 
@@ -111,6 +126,7 @@ export default function SiteBrowserScreen({ site, onClose }: Props) {
         originWhitelist={['https://*']}
         onShouldStartLoadWithRequest={onShouldStart}
         onLoadEnd={onLoadEnd}
+        injectedJavaScript={ACTIVITY_SCRIPT}
         onMessage={onMessage}
         onNavigationStateChange={onNavChange}
         onContentProcessDidTerminate={() => webRef.current?.reload()}

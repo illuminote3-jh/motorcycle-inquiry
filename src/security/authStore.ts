@@ -16,8 +16,10 @@ import {
 export type LoginMethod = 'password' | 'fingerprint' | 'face';
 
 export type AppSettings = {
-  /** 무조작 시 자동 잠금(초) */
+  /** 무조작 시 자동 잠금(초). 0 = 사용 안 함 */
   autoLockSeconds: number;
+  /** 다른 앱으로 전환 후 이 시간(초)이 지나서 돌아오면 잠금. 0 = 즉시 잠금 */
+  backgroundLockSeconds: number;
 };
 
 type AdminRecord = {
@@ -58,7 +60,7 @@ export const MAX_FREE_ATTEMPTS = 5;
 const BASE_LOCK_MS = 30_000;
 const MAX_LOCK_MS = 60 * 60_000;
 
-export const DEFAULT_SETTINGS: AppSettings = { autoLockSeconds: 180 };
+export const DEFAULT_SETTINGS: AppSettings = { autoLockSeconds: 600, backgroundLockSeconds: 300 };
 
 // ───────────────────────── 설치 / 초기화 ─────────────────────────
 

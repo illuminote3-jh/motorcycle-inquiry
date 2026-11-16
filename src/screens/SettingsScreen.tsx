@@ -1,10 +1,11 @@
 /**
- * 설정: 로그인 방식 변경 / 비밀번호 변경 / 자동 잠금 / 초기화
+ * 설정: 로그인 방식 변경 / 비밀번호 변경 / 로그인 유지(자동 잠금) / 백업 / 초기화
  */
 import React, { useState } from 'react';
 import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import { SafeAreaView } from 'react-native-safe-area-context';
 import PasswordConfirmModal from '../components/PasswordConfirmModal';
+import BackupPasswordModal from '../components/BackupPasswordModal';
 import { Button, Card, ErrorText, Field, Header, colors, formatRemaining } from '../components/ui';
 import {
   AppSettings,
@@ -17,6 +18,9 @@ import {
   validatePassword,
 } from '../security/authStore';
 import { METHOD_LABEL, checkBiometric, promptBiometric } from '../security/biometrics';
+import { withLockSuppressed } from '../security/lockGuard';
+import { BackupError, decryptBackup, mergeSites, pickBackupFile, shareBackup } from '../storage/backup';
+import { Site } from '../storage/vault';
 
 type Props = {
   method: LoginMethod;
@@ -24,15 +28,34 @@ type Props = {
   onMethodChanged: (m: LoginMethod) => void;
   onSettingsChanged: (s: AppSettings) => void;
   onReset: () => Promise<void>;
+  sites: Site[];
+  onImport: (sites: Site[]) => Promise<void>;
   onBack: () => void;
 };
 
-type Pending = { kind: 'method'; method: LoginMethod } | { kind: 'reset' } | null;
+type Pending = { kind: 'method'; method: LoginMethod } | { kind: 'reset' } | { kind: 'export' } | null;
 
-const LOCK_OPTIONS = [60, 180, 300, 600];
+/** 무조작 자동 잠금 (0 = 사용 안 함) */
+const AUTO_LOCK_OPTIONS = [180, 600, 1800, 0];
+/** 다른 앱 다녀온 뒤 로그인 유지 시간 (0 = 즉시 잠금) */
+const BG_LOCK_OPTIONS = [0, 60, 300, 1800];
 
-export default function SettingsScreen({ method, settings, onMethodChanged, onSettingsChanged, onReset, onBack }: Props) {
+const PENDING_TITLE = { method: '로그인 방식 변경', reset: '전체 초기화', export: '백업 내보내기' } as const;
+
+export default function SettingsScreen({
+  method,
+  settings,
+  onMethodChanged,
+  onSettingsChanged,
+  onReset,
+  sites,
+  onImport,
+  onBack,
+}: Props) {
   const [pending, setPending] = useState<Pending>(null);
+  const [backupMode, setBackupMode] = useState<'export' | 'import' | null>(null);
+  const [importContent, setImportContent] = useState<string | null>(null);
+  const [backupErr, setBackupErr] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [methodErr, setMethodErr] = useState<string | null>(null);
 
@@ -58,9 +81,9 @@ export default function SettingsScreen({ method, settings, onMethodChanged, onSe
       if (m === 'password') {
         await clearBiometricToken();
       } else {
-        const ok = await promptBiometric(`${METHOD_LABEL[m]} 등록 확인`);
+        const ok = await withLockSuppressed(() => promptBiometric(`${METHOD_LABEL[m]} 등록 확인`));
         if (!ok) return setMethodErr('생체인증이 확인되지 않아 변경을 취소했습니다.');
-        await registerBiometricToken(`${METHOD_LABEL[m]} 등록`);
+        await withLockSuppressed(() => registerBiometricToken(`${METHOD_LABEL[m]} 등록`));
       }
       await setLoginMethod(m);
       onMethodChanged(m);
@@ -75,7 +98,49 @@ export default function SettingsScreen({ method, settings, onMethodChanged, onSe
     setPending(null);
     if (!p) return;
     if (p.kind === 'method') await applyMethod(p.method);
+    else if (p.kind === 'export') setBackupMode('export');
     else await onReset();
+  };
+
+  // ───── 백업 ─────
+  const startExport = () => {
+    setMsg(null);
+    setBackupErr(null);
+    if (sites.length === 0) return setBackupErr('백업할 사이트가 없습니다.');
+    setPending({ kind: 'export' });
+  };
+
+  const startImport = async () => {
+    setMsg(null);
+    setBackupErr(null);
+    try {
+      const picked = await withLockSuppressed(pickBackupFile);
+      if (!picked) return;
+      setImportContent(picked.content);
+      setBackupMode('import');
+    } catch (e) {
+      setBackupErr(e instanceof BackupError ? e.message : `파일을 읽지 못했습니다: ${(e as Error).message}`);
+    }
+  };
+
+  const submitBackup = async (password: string): Promise<string | null> => {
+    try {
+      if (backupMode === 'export') {
+        await withLockSuppressed(() => shareBackup(sites, password));
+        setBackupMode(null);
+        setMsg(`사이트 ${sites.length}개를 암호화한 백업 파일을 만들었습니다. 안전한 곳(드라이브 등)에 저장하세요.`);
+      } else {
+        const incoming = await decryptBackup(importContent ?? '', password);
+        const { sites: merged, added, replaced } = mergeSites(sites, incoming);
+        await onImport(merged);
+        setBackupMode(null);
+        setImportContent(null);
+        setMsg(`복원 완료: 새로 추가 ${added}개, 덮어쓰기 ${replaced}개`);
+      }
+      return null;
+    } catch (e) {
+      return e instanceof BackupError ? e.message : `실패: ${(e as Error).message}`;
+    }
   };
 
   const submitPassword = async () => {
@@ -103,8 +168,8 @@ export default function SettingsScreen({ method, settings, onMethodChanged, onSe
     }
   };
 
-  const chooseLock = async (sec: number) => {
-    const next = { ...settings, autoLockSeconds: sec };
+  const updateSettings = async (patch: Partial<AppSettings>) => {
+    const next = { ...settings, ...patch };
     await saveSettings(next);
     onSettingsChanged(next);
   };
@@ -152,27 +217,43 @@ export default function SettingsScreen({ method, settings, onMethodChanged, onSe
           <Button title="비밀번호 변경" onPress={submitPassword} loading={pwBusy} />
         </Card>
 
-        <Text style={styles.section}>자동 잠금</Text>
+        <Text style={styles.section}>로그인 유지</Text>
         <Card>
-          <Text style={styles.small}>앱을 백그라운드로 보내면 즉시 잠기며, 아래 시간 동안 조작이 없어도 잠깁니다.</Text>
-          <View style={styles.chips}>
-            {LOCK_OPTIONS.map((sec) => (
-              <Pressable
-                key={sec}
-                onPress={() => chooseLock(sec)}
-                style={[styles.chip, settings.autoLockSeconds === sec && styles.chipOn]}
-              >
-                <Text style={[styles.chipText, settings.autoLockSeconds === sec && { color: '#fff' }]}>{sec / 60}분</Text>
-              </Pressable>
-            ))}
-          </View>
+          <Text style={styles.label}>다른 앱에 다녀온 뒤 로그인 유지</Text>
+          <Text style={styles.small}>
+            문자 인증번호 확인 등으로 다른 앱에 다녀와도 이 시간 안에 돌아오면 다시 로그인하지 않습니다.
+          </Text>
+          <Chips
+            options={BG_LOCK_OPTIONS}
+            value={settings.backgroundLockSeconds}
+            label={(s) => (s === 0 ? '즉시 잠금' : `${s / 60}분`)}
+            onChange={(s) => updateSettings({ backgroundLockSeconds: s })}
+          />
+          <Text style={[styles.label, { marginTop: 18 }]}>조작이 없을 때 자동 잠금</Text>
+          <Text style={styles.small}>웹사이트 창 안에서의 조작도 사용 중으로 인정됩니다.</Text>
+          <Chips
+            options={AUTO_LOCK_OPTIONS}
+            value={settings.autoLockSeconds}
+            label={(s) => (s === 0 ? '사용 안 함' : `${s / 60}분`)}
+            onChange={(s) => updateSettings({ autoLockSeconds: s })}
+          />
+        </Card>
+
+        <Text style={styles.section}>백업 / 복원</Text>
+        <Card>
+          <Text style={styles.small}>
+            저장된 사이트 계정을 백업 비밀번호로 암호화한 파일로 내보냅니다. 폰을 바꾸거나 앱을 다시 설치할 때
+            가져오기로 복원할 수 있습니다. 백업 파일은 비밀번호 없이는 열 수 없습니다.
+          </Text>
+          <ErrorText>{backupErr}</ErrorText>
+          <Button title={`백업 내보내기 (${sites.length}개)`} onPress={startExport} />
+          <Button title="백업 가져오기" variant="ghost" onPress={startImport} />
         </Card>
 
         <Text style={styles.section}>데이터</Text>
         <Card>
           <Text style={styles.small}>
-            계정 정보는 이 기기 안에서만 AES-256으로 암호화되어 저장되며 외부 서버로 전송되지 않습니다. 기기 변경
-            시에는 새 기기에서 다시 등록해야 합니다.
+            계정 정보는 이 기기 안에서만 AES-256으로 암호화되어 저장되며 외부 서버로 전송되지 않습니다.
           </Text>
           <Button title="전체 초기화" variant="danger" onPress={confirmReset} />
         </Card>
@@ -180,11 +261,44 @@ export default function SettingsScreen({ method, settings, onMethodChanged, onSe
 
       <PasswordConfirmModal
         visible={pending !== null}
-        title={pending?.kind === 'reset' ? '전체 초기화' : '로그인 방식 변경'}
+        title={pending ? PENDING_TITLE[pending.kind] : ''}
         onConfirmed={onConfirmed}
         onCancel={() => setPending(null)}
       />
+      <BackupPasswordModal
+        visible={backupMode !== null}
+        mode={backupMode ?? 'export'}
+        onSubmit={submitBackup}
+        onCancel={() => {
+          setBackupMode(null);
+          setImportContent(null);
+        }}
+      />
     </SafeAreaView>
+  );
+}
+
+function Chips({
+  options,
+  value,
+  label,
+  onChange,
+}: {
+  options: number[];
+  value: number;
+  label: (v: number) => string;
+  onChange: (v: number) => void;
+}) {
+  return (
+    <View style={styles.chips}>
+      {options.map((v) => (
+        <Pressable key={v} onPress={() => onChange(v)} style={[styles.chip, value === v && styles.chipOn]}>
+          <Text style={[styles.chipText, value === v && { color: '#fff' }]} numberOfLines={1}>
+            {label(v)}
+          </Text>
+        </Pressable>
+      ))}
+    </View>
   );
 }
 
@@ -213,6 +327,7 @@ const styles = StyleSheet.create({
   radioOn: { borderColor: colors.primary },
   radioDot: { width: 10, height: 10, borderRadius: 5, backgroundColor: colors.primary },
   radioLabel: { fontSize: 16, color: colors.text },
+  label: { fontSize: 14, fontWeight: '700', color: colors.text },
   small: { fontSize: 12, color: colors.sub, lineHeight: 18, marginTop: 6 },
   chips: { flexDirection: 'row', marginTop: 12, gap: 8 },
   chip: {
@@ -224,5 +339,5 @@ const styles = StyleSheet.create({
     alignItems: 'center',
   },
   chipOn: { backgroundColor: colors.primary, borderColor: colors.primary },
-  chipText: { color: colors.text, fontWeight: '600' },
+  chipText: { color: colors.text, fontWeight: '600', fontSize: 13 },
 });
